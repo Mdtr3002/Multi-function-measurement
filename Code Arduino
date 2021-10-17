@@ -1,0 +1,190 @@
+#include <SoftwareSerial.h>
+#include <DHT.h>  
+#include <MQ135.h> 
+#include <SharpGP2Y10.h>
+SoftwareSerial nodemcu(2,3);//tx-2, rx-3
+#define DHTPIN 4   
+DHT dht(DHTPIN, DHT11);
+#define PIN_MQ135 A0
+MQ135 mq135_sensor = MQ135(PIN_MQ135);
+int voPin = A1;
+int ledPin = 5;
+float dustDensity = 0; 
+SharpGP2Y10 dustSensor(voPin, ledPin);
+int UVOUT = A2;
+int REF_3V3 = A3;  
+const int trig = 6;
+const int echo = 7; 
+void setup()
+{
+Serial.begin(9600); 
+nodemcu.begin(9600);
+dht.begin();
+pinMode(UVOUT, INPUT);
+pinMode(REF_3V3, INPUT); 
+pinMode(trig, OUTPUT);
+pinMode(echo, INPUT);
+}
+void loop()
+{ 
+     unsigned long duration;
+     int distance;
+     digitalWrite(trig, 0);
+     delayMicroseconds(2);
+     digitalWrite(trig, 1);
+     delayMicroseconds(5);
+     digitalWrite(trig, 0);
+     duration = pulseIn(echo, HIGH);
+     distance = int(duration/2/29.412);  
+     if (distance == 0)  
+     return;
+     int a = 50 - distance;
+     float h = dht.readHumidity();
+     float t = dht.readTemperature();
+     if (isnan(h) || isnan(t)) 
+     return;
+     float rzero = mq135_sensor.getRZero();
+     float correctedRZero = mq135_sensor.getCorrectedRZero(t, h);
+     float resistance = mq135_sensor.getResistance();
+     float ppm = mq135_sensor.getPPM();
+     float correctedPPM = mq135_sensor.getCorrectedPPM(t, h);
+     dustDensity = dustSensor.getDustDensity();
+     int uvLevel = averageAnalogRead(UVOUT);
+     int refLevel = averageAnalogRead(REF_3V3);
+     float outputVoltage = 3.3 / refLevel * uvLevel;
+     float uvIntensity = mapfloat(outputVoltage, 0.99, 2.8, 0.0, 15.0);
+     nodemcu.write(h);
+     nodemcu.write(t);
+     nodemcu.write(correctedPPM);
+     nodemcu.write(uvIntensity);
+     nodemcu.write(dustDensity);
+     nodemcu.write(a); 
+     Serial.print("Temperature: ");
+     Serial.print(t);
+     Serial.println("*C");
+     Serial.print("Humidity: ");
+     Serial.print(h);
+     Serial.println("%");
+     Serial.print("Concentration of Dust: ");
+     Serial.print(dustDensity);
+     Serial.println("mg/m^3");
+     Serial.print("UV Ray Intensity: ");
+     Serial.print(uvIntensity);
+     Serial.println("mW/cm^2");
+     Serial.print("Air Quality: ");
+     Serial.print(correctedPPM);
+     Serial.println("ppm");
+     Serial.print("Sea Level Rise: ");
+     Serial.print(a);
+     Serial.println("cm");
+     delay(15000);
+}        
+  int averageAnalogRead(int pinToRead)
+{
+  byte numberOfReadings = 8;
+  unsigned int runningValue = 0; 
+  for(int x = 0 ; x < numberOfReadings ; x++)
+  runningValue += analogRead(pinToRead);
+  runningValue /= numberOfReadings;
+  return(runningValue);
+}
+float mapfloat(float x, float in_min, float in_max, float out_min, float out_max)
+{
+  return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
+b)Code Esp8266:
+#include <SoftwareSerial.h>
+#include <ESP8266WiFi.h>
+#include <ESP8266HTTPClient.h>
+const char *ssid =  "Dinh Tran";  
+const char *pass =  "dinh123456";
+WiFiClient client;
+String thingSpeakAddress= "http://api.thingspeak.com/update?";
+String writeAPIKey;
+String tsfield1Name;
+String tsfield2Name;
+String tsfield3Name;
+String tsfield4Name;
+String tsfield5Name;
+String tsfield6Name;
+String request_string;
+HTTPClient http;
+void setup() 
+{
+  Serial.begin(9600);
+       WiFi.disconnect();
+       delay(10);
+       Serial.print("Connecting to ");
+       Serial.println(ssid);
+       WiFi.begin(ssid, pass);
+      while (WiFi.status() != WL_CONNECTED) 
+     {
+            delay(300);
+            Serial.print(".");
+     }
+      Serial.println("");
+      Serial.println("Connected");
+}
+void loop()
+{
+int h = Serial.read();
+int t = Serial.read();
+int correctedPPM = Serial.read();
+int uvIntensity = Serial.read();
+int dustDensity = Serial.read();
+int a = Serial.read();
+  if (client.connect("api.thingspeak.com",80)) 
+    {
+      request_string = thingSpeakAddress;
+      request_string += "key=";
+      request_string += "ZOO6R2H2EYRQA26D";
+      request_string += "&";
+      request_string += "field1";
+      request_string += "=";
+      request_string += String(t);
+      request_string += "&";
+      request_string += "field2";
+      request_string += "=";
+      request_string += String(h);
+      request_string += "&";
+      request_string += "field3";
+      request_string += "=";
+      request_string += String(dustDensity);
+      request_string += "&";
+      request_string += "field4";
+      request_string += "=";
+      request_string += String(uvIntensity);
+      request_string += "&";
+      request_string += "field5";
+      request_string += "=";
+      request_string += String(correctedPPM);
+      request_string += "&";
+      request_string += "field6";
+      request_string += "=";
+      request_string += String(a);
+      http.begin(request_string);
+      http.GET();
+      http.end();
+      Serial.print("Temperature: ");
+      Serial.print(t);
+      Serial.println("*C");
+      Serial.print("Humidity: ");
+      Serial.print(h);
+      Serial.println("%");
+      Serial.print("Concentration of Dust: ");
+      Serial.print(dustDensity);
+      Serial.println("mg/m^3");
+      Serial.print("UV Ray Intensity: ");
+      Serial.print(uvIntensity);
+      Serial.println("mW/m^2");
+      Serial.print("Air Quality: ");
+      Serial.print(correctedPPM);
+      Serial.println("ppm");
+      Serial.print("Sea Level Rise: ");
+      Serial.print(a);
+      Serial.println("cm");
+      Serial.println("Waiting for next upload...");
+      delay(15000);
+    }
+}
+
